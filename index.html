@@ -32,7 +32,9 @@
       serverTimestamp,
       doc,
       updateDoc,
-      onSnapshot 
+      onSnapshot,
+      setDoc,
+      getDoc 
     } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
     import { 
       getMessaging, 
@@ -41,8 +43,7 @@
     } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging.js";
 
     // ── Your Firebase Config ── (REPLACE WITH YOUR OWN! Add messagingSenderId if not there)
-    const firebaseConfig = {
-        const firebaseConfig = {
+      const firebaseConfig = {
       apiKey: "AIzaSyCwcdPhGcHb6kDhVPYJgV0lpZoWX3qSn4A",           // ← CHANGE!
       authDomain: "heartline-6bb08.firebaseapp.com",
       projectId: "heartline-6bb08",
@@ -58,6 +59,9 @@
     const db = getFirestore(app);
     const messaging = getMessaging(app);
 
+    // ── Admin UID ── (REPLACE WITH YOUR ACTUAL ADMIN UID FROM FIREBASE AUTH)
+    const ADMIN_UID = 'YOUR_ADMIN_UID_HERE'; // Get this from Firebase console after creating admin user
+
     // Global elements
     const loginSection = document.getElementById('login-section');
     const mainApp = document.getElementById('main-app');
@@ -67,8 +71,10 @@
     const logoutBtn = document.getElementById('logout-btn');
     const suggestionForm = document.getElementById('suggestion-form');
     const togglePassword = document.getElementById('toggle-password');
-    const profilePic = document.getElementById('profile-pic'); // For admin profile
+    const profilePic = document.getElementById('profile-pic');
     const notificationToggle = document.getElementById('notification-toggle');
+    const inboxCard = document.getElementById('inbox-card');
+    const settingsCard = document.getElementById('settings-card');
 
     // Request FCM token and save to user doc
     async function requestNotifications() {
@@ -93,7 +99,6 @@
         body: payload.notification.body,
         icon: '/icon-192.png'
       });
-      // Optional: Play sound or vibrate
       if (navigator.vibrate) navigator.vibrate(200);
     });
 
@@ -111,10 +116,20 @@
         loginSection.style.display = 'none';
         mainApp.style.display = 'block';
         welcomeName.textContent = user.displayName || user.email.split('@')[0];
-        profilePic.src = user.photoURL || 'https://via.placeholder.com/150/0f0f2d/00ffea?text=TB'; // Default profile
+        profilePic.src = user.photoURL || 'https://via.placeholder.com/150/0f0f2d/00ffea?text=TB';
 
-        // Load suggestions with real-time listener
-        loadSuggestionsRealtime();
+        // Check user role from Firestore
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const isAdmin = user.uid === ADMIN_UID || (userDoc.exists() && userDoc.data().role === 'admin');
+
+        // Show/hide admin features
+        inboxCard.style.display = isAdmin ? 'block' : 'none';
+        settingsCard.style.display = isAdmin ? 'block' : 'block'; // Assuming notifications for all
+
+        // Load suggestions if admin
+        if (isAdmin) {
+          loadSuggestionsRealtime();
+        }
 
         // Request notifications if enabled
         if (notificationToggle?.checked) await requestNotifications();
@@ -147,7 +162,13 @@
       try {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(cred.user, { displayName: username });
-        await addDoc(collection(db, 'users'), { uid: cred.user.uid, username, fcmToken: null });
+        // Use setDoc with uid as doc ID
+        await setDoc(doc(db, 'users', cred.user.uid), {
+          username,
+          email,
+          role: 'user', // Default role
+          fcmToken: null
+        });
       } catch (error) {
         alert("Registration failed: " + error.message);
       }
@@ -170,7 +191,7 @@
       }
 
       try {
-        const newDoc = await addDoc(collection(db, "suggestions"), {
+        await addDoc(collection(db, "suggestions"), {
           username: auth.currentUser?.displayName || "Anonymous",
           topic,
           text: suggestion,
@@ -179,17 +200,14 @@
           reacted: false
         });
         alert("Suggestion submitted! Thank you! 🚀");
-
-        // Trigger FCM (server-side: use Cloud Functions for real push, but simulate here)
-        // For real: Call a Cloud Function to send to admin's token
-
         suggestionForm.reset();
+        // For real FCM, trigger Cloud Function here
       } catch (err) {
         alert("Error: " + err.message);
       }
     });
 
-    // Real-time suggestions load
+    // Real-time suggestions load (for admin)
     function loadSuggestionsRealtime() {
       const q = query(collection(db, "suggestions"), orderBy("createdAt", "desc"));
       onSnapshot(q, (snapshot) => {
@@ -202,6 +220,7 @@
           
           const card = document.createElement('div');
           card.className = 'suggestion-card cyber-glitch';
+          card.setAttribute('data-text', data.topic || 'Suggestion');
           card.innerHTML = `
             <div class="header">
               <div class="user-info">
@@ -210,7 +229,7 @@
               </div>
               <div class="status">
                 <button class="status-btn seen-btn ${data.seen ? 'active' : ''}" onclick="toggleSeen('${docSnap.id}')">Seen</button>
-                <button class="status-btn react-btn ${data.reacted ? 'active' : ''}" onclick="toggleReact('${docSnap.id}')">React</button>
+                <button class="status-btn react-btn ${data.reacted ? 'active' : ''}" onclick="toggleReact('${docSnap.id}')">React ❤️</button>
               </div>
             </div>
             <div class="topic neon-text">${data.topic || "General"}</div>
@@ -226,14 +245,18 @@
     window.toggleSeen = async (id) => {
       const ref = doc(db, "suggestions", id);
       const snap = await getDoc(ref);
-      await updateDoc(ref, { seen: !snap.data().seen });
+      if (snap.exists()) {
+        await updateDoc(ref, { seen: !snap.data().seen });
+      }
     };
 
     // Toggle react
     window.toggleReact = async (id) => {
       const ref = doc(db, "suggestions", id);
       const snap = await getDoc(ref);
-      await updateDoc(ref, { reacted: !snap.data().reacted });
+      if (snap.exists()) {
+        await updateDoc(ref, { reacted: !snap.data().reacted });
+      }
     };
 
     // Notification toggle
@@ -257,7 +280,7 @@
   <!-- Font Awesome for icons (real buttons) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
 
-  <!-- Inlined Cyberpunk CSS - Massive, Magnificent, Neon Glows, Glitch Effects, Futuristic Fonts -->
+  <!-- Inlined Cyberpunk CSS - Enhanced for Professional Layout -->
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@300;500;700&display=swap');
 
@@ -280,6 +303,11 @@
       padding: 0;
       overflow-x: hidden;
       position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
     }
 
     #particles {
@@ -303,9 +331,9 @@
     }
 
     @keyframes float {
-      0% { transform: translateY(0); opacity: 1; }
-      50% { transform: translateY(-20px); opacity: 0.5; }
-      100% { transform: translateY(0); opacity: 1; }
+      0% { transform: translateY(0) translateX(0); opacity: 1; }
+      50% { transform: translateY(-20px) translateX(5px); opacity: 0.5; }
+      100% { transform: translateY(0) translateX(0); opacity: 1; }
     }
 
     @keyframes flicker {
@@ -319,78 +347,100 @@
     }
 
     .glitch {
+      position: relative;
       animation: glitch var(--glitch-time) infinite;
     }
 
     @keyframes glitch {
       0% { transform: translate(0); }
-      20% { transform: translate(-2px, 2px); }
-      40% { transform: translate(-2px, -2px); }
-      60% { transform: translate(2px, 2px); }
-      80% { transform: translate(2px, -2px); }
+      20% { transform: translate(-2px, 2px); opacity: 0.8; }
+      40% { transform: translate(-2px, -2px); opacity: 1; }
+      60% { transform: translate(2px, 2px); opacity: 0.8; }
+      80% { transform: translate(2px, -2px); opacity: 1; }
       100% { transform: translate(0); }
     }
 
     .cyber-panel {
       background: var(--panel-bg);
       border: 1px solid var(--neon-cyan);
-      border-radius: 10px;
+      border-radius: 15px;
       box-shadow: var(--glow-shadow);
-      padding: 20px;
-      margin: 20px auto;
-      max-width: 800px;
-      backdrop-filter: blur(10px);
+      padding: 30px;
+      margin: 20px;
+      max-width: 500px;
+      width: 100%;
+      backdrop-filter: blur(15px);
+      transition: all 0.3s ease;
+    }
+
+    .cyber-panel:hover {
+      box-shadow: 0 0 15px var(--neon-cyan), 0 0 30px var(--neon-cyan), 0 0 45px var(--neon-cyan);
+    }
+
+    .auth-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .neon-title {
+      font-size: 2em;
+      margin-bottom: 20px;
+    }
+
+    .tabs {
+      display: flex;
+      margin-bottom: 20px;
+    }
+
+    .tabs .tab {
+      background: none;
+      border: none;
+      color: var(--text-color);
+      padding: 10px 30px;
+      cursor: pointer;
+      font-size: 1.2em;
+      border-bottom: 3px solid transparent;
+      transition: border-bottom 0.3s;
+    }
+
+    .tabs .tab.active {
+      border-bottom: 3px solid var(--neon-cyan);
+      color: var(--neon-cyan);
+    }
+
+    .auth-form {
+      width: 100%;
+      display: none;
+      flex-direction: column;
+    }
+
+    .auth-form.active {
+      display: flex;
+    }
+
+    .auth-form label {
+      font-size: 1em;
+      margin-bottom: 5px;
+      color: var(--neon-purple);
     }
 
     .cyber-input, .cyber-textarea {
       background: rgba(255,255,255,0.05);
       border: 1px solid var(--neon-purple);
       color: var(--text-color);
-      padding: 10px;
-      border-radius: 5px;
+      padding: 12px;
+      border-radius: 8px;
       width: 100%;
-      margin-bottom: 10px;
+      margin-bottom: 15px;
       box-shadow: inset 0 0 5px var(--neon-purple);
       font-family: 'Rajdhani', sans-serif;
+      font-size: 1em;
     }
 
     .cyber-textarea {
       resize: vertical;
-      min-height: 100px;
-    }
-
-    .cyber-btn {
-      background: linear-gradient(45deg, var(--neon-cyan), var(--neon-pink));
-      border: none;
-      color: var(--dark-bg);
-      padding: 10px 20px;
-      border-radius: 5px;
-      cursor: pointer;
-      font-weight: bold;
-      text-transform: uppercase;
-      box-shadow: var(--glow-shadow);
-      transition: transform 0.2s;
-    }
-
-    .cyber-btn:hover {
-      transform: scale(1.05);
-      box-shadow: 0 0 15px var(--neon-cyan), 0 0 30px var(--neon-cyan);
-    }
-
-    .cyber-btn.small {
-      padding: 5px 10px;
-      font-size: 0.8em;
-    }
-
-    .cyber-btn.active {
-      background: linear-gradient(45deg, var(--neon-pink), var(--neon-cyan));
-    }
-
-    .toggle-btn {
-      background: none;
-      border: none;
-      color: var(--neon-cyan);
-      cursor: pointer;
+      min-height: 120px;
     }
 
     .password-wrapper {
@@ -399,63 +449,92 @@
 
     .password-wrapper .toggle-btn {
       position: absolute;
-      right: 10px;
+      right: 15px;
       top: 50%;
       transform: translateY(-50%);
+      font-size: 1.2em;
     }
 
-    .tabs .tab {
-      background: none;
+    .cyber-btn {
+      background: linear-gradient(45deg, var(--neon-cyan), var(--neon-pink));
       border: none;
-      color: var(--text-color);
-      padding: 10px 20px;
+      color: var(--dark-bg);
+      padding: 12px 25px;
+      border-radius: 8px;
       cursor: pointer;
-      border-bottom: 2px solid transparent;
+      font-weight: bold;
+      text-transform: uppercase;
+      box-shadow: var(--glow-shadow);
+      transition: transform 0.3s, box-shadow 0.3s;
+      font-size: 1em;
     }
 
-    .tabs .tab.active {
-      border-bottom: 2px solid var(--neon-cyan);
-      color: var(--neon-cyan);
+    .cyber-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 15px var(--neon-cyan), 0 0 30px var(--neon-cyan), 0 0 45px var(--neon-cyan);
     }
 
-    .auth-form {
-      display: none;
+    .cyber-btn.small {
+      padding: 8px 15px;
+      font-size: 0.9em;
     }
 
-    .auth-form.active {
-      display: block;
+    .cyber-btn.active {
+      background: linear-gradient(45deg, var(--neon-pink), var(--neon-cyan));
+    }
+
+    .contact {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    .contact p {
+      margin-bottom: 10px;
+    }
+
+    .contact a {
+      margin: 0 5px;
+    }
+
+    .main-app {
+      width: 100%;
+      max-width: 800px;
     }
 
     .neon-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 10px 20px;
+      padding: 15px 25px;
       background: var(--panel-bg);
+      border-radius: 15px 15px 0 0;
       box-shadow: var(--glow-shadow);
     }
 
+    .title {
+      font-size: 1.5em;
+    }
+
     .theme-toggle {
-      display: flex;
-      align-items: center;
+      position: relative;
     }
 
     .cyber-toggle {
       appearance: none;
-      width: 40px;
-      height: 20px;
+      width: 50px;
+      height: 25px;
       background: var(--dark-bg);
-      border-radius: 20px;
+      border-radius: 25px;
       position: relative;
       cursor: pointer;
-      box-shadow: inset 0 0 5px var(--neon-purple);
+      box-shadow: inset 0 0 8px var(--neon-purple);
     }
 
     .cyber-toggle::before {
       content: '';
       position: absolute;
-      width: 18px;
-      height: 18px;
+      width: 23px;
+      height: 23px;
       background: var(--neon-cyan);
       border-radius: 50%;
       top: 1px;
@@ -465,37 +544,55 @@
     }
 
     .cyber-toggle:checked::before {
-      left: 21px;
+      left: 26px;
       background: var(--neon-pink);
+    }
+
+    .theme-toggle label {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 50px;
+      height: 25px;
+      opacity: 0;
+      cursor: pointer;
     }
 
     .welcome-bar {
       display: flex;
       align-items: center;
-      padding: 10px;
+      padding: 15px;
       background: var(--panel-bg);
       margin-bottom: 20px;
       border-radius: 10px;
+      box-shadow: var(--glow-shadow);
     }
 
     .profile-pic {
-      width: 50px;
-      height: 50px;
+      width: 60px;
+      height: 60px;
       border-radius: 50%;
-      border: 2px solid var(--neon-cyan);
-      margin-right: 10px;
+      border: 3px solid var(--neon-cyan);
+      margin-right: 15px;
       box-shadow: var(--glow-shadow);
     }
 
     .actions {
       margin-left: auto;
+      display: flex;
+      gap: 10px;
     }
 
     .card {
-      margin-bottom: 20px;
-      padding: 15px;
+      margin-bottom: 25px;
+      padding: 20px;
       border-radius: 10px;
       box-shadow: var(--glow-shadow);
+      transition: all 0.3s;
+    }
+
+    .card:hover {
+      transform: translateY(-5px);
     }
 
     .cyber-card {
@@ -507,25 +604,33 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      margin-bottom: 15px;
     }
 
     .suggestions-list {
-      max-height: 400px;
+      max-height: 500px;
       overflow-y: auto;
+      padding-right: 10px;
     }
 
     .suggestion-card {
       background: rgba(255,255,255,0.05);
-      padding: 10px;
-      margin-bottom: 10px;
-      border-radius: 5px;
+      padding: 15px;
+      margin-bottom: 15px;
+      border-radius: 8px;
       border: 1px solid var(--neon-purple);
+      transition: box-shadow 0.3s;
+    }
+
+    .suggestion-card:hover {
+      box-shadow: 0 0 15px var(--neon-purple);
     }
 
     .suggestion-card .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      margin-bottom: 10px;
     }
 
     .user-info {
@@ -534,29 +639,32 @@
     }
 
     .avatar {
-      width: 30px;
-      height: 30px;
+      width: 40px;
+      height: 40px;
       border-radius: 50%;
       margin-right: 10px;
+      box-shadow: var(--glow-shadow);
     }
 
     .username {
       font-weight: bold;
+      font-size: 1.1em;
     }
 
     .status {
       display: flex;
-      gap: 5px;
+      gap: 10px;
     }
 
     .status-btn {
       background: none;
       border: 1px solid var(--neon-cyan);
       color: var(--neon-cyan);
-      padding: 5px 10px;
+      padding: 6px 12px;
       border-radius: 5px;
       cursor: pointer;
-      font-size: 0.8em;
+      font-size: 0.9em;
+      transition: background 0.3s, color 0.3s;
     }
 
     .status-btn.active {
@@ -565,44 +673,68 @@
     }
 
     .topic {
-      font-size: 1.1em;
-      margin: 5px 0;
+      font-size: 1.2em;
+      margin: 10px 0;
     }
 
     .text {
-      margin-bottom: 5px;
+      margin-bottom: 10px;
+      line-height: 1.5;
     }
 
     .time {
-      font-size: 0.8em;
+      font-size: 0.9em;
       color: rgba(255,255,255,0.7);
+    }
+
+    .setting-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .setting-item label {
+      font-size: 1.1em;
     }
 
     .bottom-nav {
       display: flex;
       justify-content: space-around;
-      padding: 10px;
+      padding: 15px;
       background: var(--panel-bg);
       position: fixed;
       bottom: 0;
+      left: 0;
       width: 100%;
       box-shadow: var(--glow-shadow);
+      z-index: 10;
     }
 
     .bottom-nav a {
       text-decoration: none;
       color: var(--text-color);
+      display: flex;
+      align-items: center;
+      font-size: 1em;
+      transition: color 0.3s;
+    }
+
+    .bottom-nav a:hover {
+      color: var(--neon-cyan);
     }
 
     .cyber-nav a i {
-      margin-right: 5px;
+      margin-right: 8px;
+      font-size: 1.2em;
     }
 
     .footer-info {
       text-align: center;
-      font-size: 0.8em;
-      padding: 10px;
+      font-size: 0.9em;
+      padding: 15px;
       color: rgba(255,255,255,0.7);
+      margin-bottom: 80px; // Space for bottom nav
     }
 
     .dark-mode {
@@ -625,37 +757,68 @@
       left: 0;
       width: 100%;
       height: 100%;
-      clip: rect(0, 0, 0, 0);
-      animation: glitch-anim 2s infinite;
+      background: transparent;
     }
 
     .cyber-glitch::before {
       left: 2px;
       text-shadow: -2px 0 var(--neon-pink);
-      animation: glitch-anim-2 3s infinite;
+      animation: glitch-anim-1 2s infinite linear alternate-reverse;
     }
 
     .cyber-glitch::after {
       left: -2px;
       text-shadow: 2px 0 var(--neon-cyan);
-      animation: glitch-anim-3 2.5s infinite;
+      animation: glitch-anim-2 3s infinite linear alternate-reverse;
     }
 
-    @keyframes glitch-anim {
-      0% { clip: rect(0, 9999px, 0, 0); }
-      /* Add more keyframes for random clipping */
-      100% { clip: rect(0, 9999px, 0, 0); }
+    @keyframes glitch-anim-1 {
+      0% { clip: rect(132px, auto, 101px, 30px); opacity: 0.9; }
+      5% { clip: rect(17px, auto, 94px, 30px); }
+      10% { clip: rect(40px, auto, 66px, 30px); }
+      15% { clip: rect(87px, auto, 82px, 30px); }
+      20% { clip: rect(137px, auto, 61px, 30px); }
+      25% { clip: rect(34px, auto, 14px, 30px); }
+      30% { clip: rect(81px, auto, 3px, 30px); }
+      35% { clip: rect(5px, auto, 84px, 30px); }
+      40% { clip: rect(57px, auto, 23px, 30px); }
+      45% { clip: rect(15px, auto, 150px, 30px); }
+      50% { clip: rect(68px, auto, 78px, 30px); }
+      55% { clip: rect(67px, auto, 53px, 30px); }
+      60% { clip: rect(18px, auto, 124px, 30px); }
+      65% { clip: rect(51px, auto, 46px, 30px); }
+      70% { clip: rect(86px, auto, 131px, 30px); }
+      75% { clip: rect(7px, auto, 107px, 30px); }
+      80% { clip: rect(24px, auto, 10px, 30px); }
+      85% { clip: rect(32px, auto, 112px, 30px); }
+      90% { clip: rect(46px, auto, 49px, 30px); }
+      95% { clip: rect(16px, auto, 129px, 30px); }
+      100% { clip: rect(0, auto, auto, 30px); opacity: 1; }
     }
 
     @keyframes glitch-anim-2 {
-      /* Similar with different timing */
+      0% { clip: rect(65px, auto, 100px, 30px); }
+      5% { clip: rect(13px, auto, 160px, 30px); }
+      10% { clip: rect(96px, auto, 80px, 30px); }
+      15% { clip: rect(49px, auto, 14px, 30px); }
+      20% { clip: rect(42px, auto, 160px, 30px); }
+      25% { clip: rect(94px, auto, 40px, 30px); }
+      30% { clip: rect(48px, auto, 29px, 30px); }
+      35% { clip: rect(88px, auto, 122px, 30px); }
+      40% { clip: rect(71px, auto, 33px, 30px); }
+      45% { clip: rect(89px, auto, 135px, 30px); }
+      50% { clip: rect(35px, auto, 128px, 30px); }
+      55% { clip: rect(78px, auto, 84px, 30px); }
+      60% { clip: rect(82px, auto, 46px, 30px); }
+      65% { clip: rect(157px, auto, 140px, 30px); }
+      70% { clip: rect(67px, auto, 130px, 30px); }
+      75% { clip: rect(35px, auto, 5px, 30px); }
+      80% { clip: rect(156px, auto, 34px, 30px); }
+      85% { clip: rect(67px, auto, 64px, 30px); }
+      90% { clip: rect(124px, auto, 81px, 30px); }
+      95% { clip: rect(149px, auto, 36px, 30px); }
+      100% { clip: rect(0, auto, auto, 30px); }
     }
-
-    @keyframes glitch-anim-3 {
-      /* Similar */
-    }
-
-    /* Add more detailed keyframes for glitch if needed */
   </style>
 </head>
 <body class="cyber-body">
@@ -676,9 +839,11 @@
 
     <!-- Login Form -->
     <form id="login-form" class="auth-form active">
-      <input type="email" id="email" class="cyber-input" placeholder="Email or Username" required/>
+      <label for="email">Username or Email</label>
+      <input type="email" id="email" class="cyber-input" placeholder="Enter email or username" required/>
+      <label for="password">Password</label>
       <div class="password-wrapper">
-        <input type="password" id="password" class="cyber-input" placeholder="Password" required/>
+        <input type="password" id="password" class="cyber-input" placeholder="Enter password" required/>
         <button type="button" id="toggle-password" class="toggle-btn"><i class="fas fa-eye"></i></button>
       </div>
       <button type="submit" class="cyber-btn login">Login</button>
@@ -686,33 +851,36 @@
 
     <!-- Register Form -->
     <form id="register-form" class="auth-form">
-      <input type="text" id="reg-username" class="cyber-input" placeholder="Username" required/>
-      <input type="email" id="reg-email" class="cyber-input" placeholder="Email" required/>
-      <input type="password" id="reg-password" class="cyber-input" placeholder="Password" required/>
+      <label for="reg-username">Username</label>
+      <input type="text" id="reg-username" class="cyber-input" placeholder="Choose a username" required/>
+      <label for="reg-email">Email</label>
+      <input type="email" id="reg-email" class="cyber-input" placeholder="Enter your email" required/>
+      <label for="reg-password">Password</label>
+      <input type="password" id="reg-password" class="cyber-input" placeholder="Choose a password" required/>
       <button type="submit" class="cyber-btn register">Create Account</button>
     </form>
 
     <div class="contact">
       <p class="neon-text">Contact Tech Brian:</p>
       <a href="https://wa.me/254748950572" class="cyber-btn whatsapp"><i class="fab fa-whatsapp"></i> WhatsApp</a>
-      <a href="mailto:bridlah88@gmail.com" class="cyber-btn email"><i class="fas fa-envelope"></i> Email Me</a>
+      <a href="mailto:bridah888@gmail.com" class="cyber-btn email"><i class="fas fa-envelope"></i> Email Me</a>
       <a href="tel:+254748950572" class="cyber-btn call"><i class="fas fa-phone"></i> Call Me</a>
     </div>
   </div>
 
   <!-- ── MAIN APP (Admin / User View) ── -->
-  <div id="main-app" class="main-app cyber-panel" style="display:none;">
+  <div id="main-app" class="main-app" style="display:none;">
     <header class="neon-header glitch">
       <div class="title">
         <i class="fas fa-lightbulb"></i> Tech Brian Suggestions
       </div>
-      <div class="theme-toggle cyber-toggle">
-        <input type="checkbox" id="dark-mode-toggle"/>
-        <label for="dark-mode-toggle"><i class="fas fa-sun"></i><i class="fas fa-moon"></i></label>
+      <div class="theme-toggle">
+        <input type="checkbox" id="dark-mode-toggle" class="cyber-toggle"/>
+        <label for="dark-mode-toggle"></label>
       </div>
     </header>
 
-    <div class="welcome-bar">
+    <div class="welcome-bar cyber-panel">
       <img id="profile-pic" class="profile-pic" src="https://via.placeholder.com/50" alt="Profile"/>
       <h2 class="neon-text">Welcome, <span id="welcome-name">User</span>!</h2>
       <div class="actions">
@@ -721,18 +889,20 @@
       </div>
     </div>
 
-    <!-- Suggestion Submission -->
-    <div class="card submit-card cyber-card">
+    <!-- Suggestion Submission (for all users) -->
+    <div class="card submit-card cyber-card cyber-panel">
       <h3 class="neon-text">Submit a Suggestion</h3>
       <form id="suggestion-form">
-        <input type="text" id="topic" class="cyber-input" placeholder="Topic / Theme:" required/>
-        <textarea id="suggestion-text" class="cyber-textarea" placeholder="Your Suggestion..." rows="5" required></textarea>
+        <label for="topic">Topic / Theme</label>
+        <input type="text" id="topic" class="cyber-input" placeholder="Enter topic or theme" required/>
+        <label for="suggestion-text">Your Suggestion</label>
+        <textarea id="suggestion-text" class="cyber-textarea" placeholder="Describe your suggestion..." rows="5" required></textarea>
         <button type="submit" class="cyber-btn submit">Submit</button>
       </form>
     </div>
 
-    <!-- Admin Inbox -->
-    <div class="card inbox-card cyber-card">
+    <!-- Admin Inbox (hidden for non-admin) -->
+    <div id="inbox-card" class="card inbox-card cyber-card cyber-panel" style="display: none;">
       <div class="inbox-header">
         <h3 class="neon-text">Admin Inbox</h3>
         <div class="stats neon-text">
@@ -743,7 +913,7 @@
     </div>
 
     <!-- Settings Section -->
-    <div class="card settings-card cyber-card">
+    <div id="settings-card" class="card settings-card cyber-card cyber-panel">
       <h3 class="neon-text">Settings</h3>
       <div class="setting-item">
         <label for="notification-toggle">Enable Notifications</label>
@@ -782,12 +952,13 @@
     // Particle JS for background (simple cyberpunk particles)
     function initParticles() {
       const particles = document.getElementById('particles');
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 150; i++) { // Increased for more vibes
         const particle = document.createElement('div');
         particle.className = 'particle';
         particle.style.left = Math.random() * 100 + '%';
         particle.style.top = Math.random() * 100 + '%';
         particle.style.animationDelay = Math.random() * 5 + 's';
+        particle.style.animationDuration = (Math.random() * 3 + 3) + 's'; // Varied duration
         particles.appendChild(particle);
       }
     }
