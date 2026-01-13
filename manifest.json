@@ -1,0 +1,39 @@
+{
+  "name": "Tech Brian Suggestions",
+  "short_name": "TB Suggestions",
+  "description": "Submit ideas, features, and feedback to Tech Brian in a cyberpunk world",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a1f",
+  "theme_color": "#00ffea",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://via.placeholder.com/192x192/0f0f2d/00ffea?text=TB",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://via.placeholder.com/512x512/0f0f2d/00ffea?text=TB",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "https://via.placeholder.com/1080x1920/0f0f2d/00ffea?text=Cyber+Suggestions",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "wide"
+    }
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "web+cyber",
+      "title": "Cyber Protocol",
+      "uri": "/handle?uri=%s"
+    }
+  ]
+}
