@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tech Brian Suggestions</title>
+  
+  <!-- PWA Icons & Manifest -->
+  <link rel="manifest" href="/manifest.json"/>
+  <meta name="theme-color" content="#0f0f2d"/>
+  <link rel="apple-touch-icon" href="https://via.placeholder.com/192x192/0f0f2d/00ffea?text=TB"/>
+  
+  <!-- Firebase SDKs (modular v9+) -->
+  <script type="module">
+    // Import Firebase
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import { 
+      getAuth, 
+      signInWithEmailAndPassword, 
+      createUserWithEmailAndPassword, 
+      onAuthStateChanged, 
+      signOut,
+      updateProfile 
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+    import { 
+      getFirestore, 
+      collection, 
+      addDoc, 
+      getDocs, 
+      query, 
+      orderBy, 
+      serverTimestamp,
+      doc,
+      updateDoc,
+      onSnapshot 
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+    import { 
+      getMessaging, 
+      getToken, 
+      onMessage 
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging.js";
+
+    // ── Your Firebase Config ── (REPLACE WITH YOUR OWN! Add messagingSenderId if not there)
+      const firebaseConfig = {
+    apiKey: "AIzaSyCwcdPhGcHb6kDhVPYJgV0lpZoWX3qSn4A",           // ← CHANGE!
+    authDomain: "heartline-6bb08.firebaseapp.com",
+    projectId: "heartline-6bb08",
+    storageBucket: "heartline-6bb08.firebasestorage.app",
+    messagingSenderId: "372851895770",
+    appId: "1:372851895770:web:aac0ae1e5bdb22482c24e3"
+    measurementId: "G-C51VHHGKG6"  // Optional for Analytics
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const messaging = getMessaging(app);
+
+    // Global elements
+    const loginSection = document.getElementById('login-section');
+    const mainApp = document.getElementById('main-app');
+    const welcomeName = document.getElementById('welcome-name');
+    const suggestionsList = document.getElementById('suggestions-list');
+    const totalCount = document.getElementById('total-count');
+    const logoutBtn = document.getElementById('logout-btn');
+    const suggestionForm = document.getElementById('suggestion-form');
+    const togglePassword = document.getElementById('toggle-password');
+    const profilePic = document.getElementById('profile-pic'); // For admin profile
+    const notificationToggle = document.getElementById('notification-toggle');
+
+    // Request FCM token and save to user doc
+    async function requestNotifications() {
+      try {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+          const token = await getToken(messaging, { vapidKey: 'YOUR_VAPID_KEY_HERE' }); // Generate VAPID in Firebase console
+          if (auth.currentUser) {
+            await updateDoc(doc(db, 'users', auth.currentUser.uid), { fcmToken: token });
+            console.log('FCM Token saved:', token);
+          }
+        }
+      } catch (err) {
+        console.error('FCM Error:', err);
+      }
+    }
+
+    // Foreground message handler
+    onMessage(messaging, (payload) => {
+      console.log('Foreground message:', payload);
+      const notification = new Notification(payload.notification.title, {
+        body: payload.notification.body,
+        icon: '/icon-192.png'
+      });
+      // Optional: Play sound or vibrate
+      if (navigator.vibrate) navigator.vibrate(200);
+    });
+
+    // Show/hide password
+    togglePassword?.addEventListener('click', () => {
+      const input = document.getElementById('password');
+      const type = input.type === 'password' ? 'text' : 'password';
+      input.type = type;
+      togglePassword.innerHTML = type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+    });
+
+    // Auth state listener
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        loginSection.style.display = 'none';
+        mainApp.style.display = 'block';
+        welcomeName.textContent = user.displayName || user.email.split('@')[0];
+        profilePic.src = user.photoURL || 'https://via.placeholder.com/150/0f0f2d/00ffea?text=TB'; // Default profile
+
+        // Load suggestions with real-time listener
+        loadSuggestionsRealtime();
+
+        // Request notifications if enabled
+        if (notificationToggle?.checked) await requestNotifications();
+      } else {
+        loginSection.style.display = 'flex';
+        mainApp.style.display = 'none';
+      }
+    });
+
+    // Login
+    document.getElementById('login-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+      } catch (error) {
+        alert("Login failed: " + error.message);
+      }
+    });
+
+    // Register
+    document.getElementById('register-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('reg-email').value;
+      const password = document.getElementById('reg-password').value;
+      const username = document.getElementById('reg-username').value;
+
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(cred.user, { displayName: username });
+        await addDoc(collection(db, 'users'), { uid: cred.user.uid, username, fcmToken: null });
+      } catch (error) {
+        alert("Registration failed: " + error.message);
+      }
+    });
+
+    // Logout
+    logoutBtn?.addEventListener('click', async () => {
+      await signOut(auth);
+    });
+
+    // Submit suggestion (triggers FCM to admin)
+    suggestionForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const topic = document.getElementById('topic').value.trim();
+      const suggestion = document.getElementById('suggestion-text').value.trim();
+
+      if (!topic || !suggestion) {
+        alert("Please fill in both fields!");
+        return;
+      }
+
+      try {
+        const newDoc = await addDoc(collection(db, "suggestions"), {
+          username: auth.currentUser?.displayName || "Anonymous",
+          topic,
+          text: suggestion,
+          createdAt: serverTimestamp(),
+          seen: false,
+          reacted: false
+        });
+        alert("Suggestion submitted! Thank you! 🚀");
+
+        // Trigger FCM (server-side: use Cloud Functions for real push, but simulate here)
+        // For real: Call a Cloud Function to send to admin's token
+
+        suggestionForm.reset();
+      } catch (err) {
+        alert("Error: " + err.message);
+      }
+    });
+
+    // Real-time suggestions load
+    function loadSuggestionsRealtime() {
+      const q = query(collection(db, "suggestions"), orderBy("createdAt", "desc"));
+      onSnapshot(q, (snapshot) => {
+        suggestionsList.innerHTML = '';
+        totalCount.textContent = snapshot.size;
+
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const time = data.createdAt ? new Date(data.createdAt.toDate()).toLocaleString() : "—";
+          
+          const card = document.createElement('div');
+          card.className = 'suggestion-card cyber-glitch';
+          card.innerHTML = `
+            <div class="header">
+              <div class="user-info">
+                <img class="avatar" src="https://via.placeholder.com/50/0f0f2d/00ffea?text=${data.username[0].toUpperCase()}" alt="Avatar">
+                <span class="username">${data.username}</span>
+              </div>
+              <div class="status">
+                <button class="status-btn seen-btn ${data.seen ? 'active' : ''}" onclick="toggleSeen('${docSnap.id}')">Seen</button>
+                <button class="status-btn react-btn ${data.reacted ? 'active' : ''}" onclick="toggleReact('${docSnap.id}')">React</button>
+              </div>
+            </div>
+            <div class="topic neon-text">${data.topic || "General"}</div>
+            <div class="text">${data.text}</div>
+            <div class="time">${time}</div>
+          `;
+          suggestionsList.appendChild(card);
+        });
+      });
+    }
+
+    // Toggle seen
+    window.toggleSeen = async (id) => {
+      const ref = doc(db, "suggestions", id);
+      const snap = await getDoc(ref);
+      await updateDoc(ref, { seen: !snap.data().seen });
+    };
+
+    // Toggle react
+    window.toggleReact = async (id) => {
+      const ref = doc(db, "suggestions", id);
+      const snap = await getDoc(ref);
+      await updateDoc(ref, { reacted: !snap.data().reacted });
+    };
+
+    // Notification toggle
+    notificationToggle?.addEventListener('change', async (e) => {
+      if (e.target.checked) await requestNotifications();
+    });
+
+    // Service Worker registration with FCM
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => {
+            messaging.useServiceWorker(reg);
+            console.log('Service Worker registered');
+          })
+          .catch(err => console.log('Service Worker registration failed:', err));
+      });
+    }
+  </script>
+
+  <!-- Font Awesome for icons (real buttons) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body class="cyber-body">
+
+  <!-- Particle Background for Cyberpunk -->
+  <div id="particles"></div>
+
+  <!-- ── LOGIN / REGISTER SCREEN ── -->
+  <div id="login-section" class="auth-container cyber-panel">
+    <div class="neon-title glitch">
+      <span>Tech Brian</span> Suggestions
+    </div>
+
+    <div class="tabs">
+      <button class="tab active cyber-btn" onclick="showTab('login')">Login</button>
+      <button class="tab cyber-btn" onclick="showTab('register')">Register</button>
+    </div>
+
+    <!-- Login Form -->
+    <form id="login-form" class="auth-form active">
+      <input type="email" id="email" class="cyber-input" placeholder="Email or Username" required/>
+      <div class="password-wrapper">
+        <input type="password" id="password" class="cyber-input" placeholder="Password" required/>
+        <button type="button" id="toggle-password" class="toggle-btn"><i class="fas fa-eye"></i></button>
+      </div>
+      <button type="submit" class="cyber-btn login">Login</button>
+    </form>
+
+    <!-- Register Form -->
+    <form id="register-form" class="auth-form">
+      <input type="text" id="reg-username" class="cyber-input" placeholder="Username" required/>
+      <input type="email" id="reg-email" class="cyber-input" placeholder="Email" required/>
+      <input type="password" id="reg-password" class="cyber-input" placeholder="Password" required/>
+      <button type="submit" class="cyber-btn register">Create Account</button>
+    </form>
+
+    <div class="contact">
+      <p class="neon-text">Contact Tech Brian:</p>
+      <a href="https://wa.me/2547XXXXXXXX" class="cyber-btn whatsapp"><i class="fab fa-whatsapp"></i> WhatsApp</a>
+      <a href="mailto:bridlah88@gmail.com" class="cyber-btn email"><i class="fas fa-envelope"></i> Email Me</a>
+      <a href="tel:+2547XXXXXXXX" class="cyber-btn call"><i class="fas fa-phone"></i> Call Me</a>
+    </div>
+  </div>
+
+  <!-- ── MAIN APP (Admin / User View) ── -->
+  <div id="main-app" class="main-app cyber-panel" style="display:none;">
+    <header class="neon-header glitch">
+      <div class="title">
+        <i class="fas fa-lightbulb"></i> Tech Brian Suggestions
+      </div>
+      <div class="theme-toggle cyber-toggle">
+        <input type="checkbox" id="dark-mode-toggle"/>
+        <label for="dark-mode-toggle"><i class="fas fa-sun"></i><i class="fas fa-moon"></i></label>
+      </div>
+    </header>
+
+    <div class="welcome-bar">
+      <img id="profile-pic" class="profile-pic" src="https://via.placeholder.com/50" alt="Profile"/>
+      <h2 class="neon-text">Welcome, <span id="welcome-name">User</span>!</h2>
+      <div class="actions">
+        <button class="cyber-btn small">Edit Profile</button>
+        <button id="logout-btn" class="cyber-btn small logout">Logout</button>
+      </div>
+    </div>
+
+    <!-- Suggestion Submission -->
+    <div class="card submit-card cyber-card">
+      <h3 class="neon-text">Submit a Suggestion</h3>
+      <form id="suggestion-form">
+        <input type="text" id="topic" class="cyber-input" placeholder="Topic / Theme:" required/>
+        <textarea id="suggestion-text" class="cyber-textarea" placeholder="Your Suggestion..." rows="5" required></textarea>
+        <button type="submit" class="cyber-btn submit">Submit</button>
+      </form>
+    </div>
+
+    <!-- Admin Inbox -->
+    <div class="card inbox-card cyber-card">
+      <div class="inbox-header">
+        <h3 class="neon-text">Admin Inbox</h3>
+        <div class="stats neon-text">
+          Total Suggestions: <span id="total-count">0</span>
+        </div>
+      </div>
+      <div id="suggestions-list" class="suggestions-list"></div>
+    </div>
+
+    <!-- Settings Section -->
+    <div class="card settings-card cyber-card">
+      <h3 class="neon-text">Settings</h3>
+      <div class="setting-item">
+        <label for="notification-toggle">Enable Notifications</label>
+        <input type="checkbox" id="notification-toggle" class="cyber-toggle"/>
+      </div>
+    </div>
+
+    <!-- Bottom Nav -->
+    <nav class="bottom-nav cyber-nav">
+      <a href="#" class="cyber-btn"><i class="fas fa-home"></i> Home</a>
+      <a href="#" class="cyber-btn"><i class="fas fa-lightbulb"></i> My Suggestions</a>
+      <a href="#" class="cyber-btn"><i class="fas fa-cog"></i> Settings</a>
+      <a href="#" class="cyber-btn"><i class="fas fa-info-circle"></i> About</a>
+    </nav>
+
+    <div class="footer-info neon-text">
+      PWA Installed • Notifications Enabled • Powered by Firebase
+    </div>
+  </div>
+
+  <script>
+    // Simple tab switcher for login/register
+    function showTab(tab) {
+      document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      
+      document.getElementById(tab + '-form').classList.add('active');
+      event.target.classList.add('active');
+    }
+
+    // Dark mode toggle
+    document.getElementById('dark-mode-toggle')?.addEventListener('change', (e) => {
+      document.body.classList.toggle('dark-mode', e.target.checked);
+    });
+
+    // Particle JS for background (simple cyberpunk particles)
+    function initParticles() {
+      const particles = document.getElementById('particles');
+      for (let i = 0; i < 100; i++) {
+        const particle = document.createElement('div');
+        particle.className = 'particle';
+        particle.style.left = Math.random() * 100 + '%';
+        particle.style.top = Math.random() * 100 + '%';
+        particle.style.animationDelay = Math.random() * 5 + 's';
+        particles.appendChild(particle);
+      }
+    }
+    initParticles();
+  </script>
+</body>
+</html>
